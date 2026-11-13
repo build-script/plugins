@@ -1,0 +1,2 @@
+// a Go program with a test
+build_go("{name}")

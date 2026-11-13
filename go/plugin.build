@@ -1,0 +1,58 @@
+// Go programs with the toolchain of go.dev: build, run and test
+
+// only the go command the build starts with: the go and toolchain lines of go.mod pick the Go
+// that builds (GOTOOLCHAIN=auto), like when go runs on its own
+go_version = "1.27.4"
+
+// the names go.dev gives this machine
+_go_system = if operating_system() == "macos" { "darwin" } else { operating_system() }
+_go_architecture = if architecture() == "aarch64" { "arm64" } else { "amd64" }
+
+// the go command of a version, downloaded once
+go_tool = fn(version: str) -> str {
+    archive = "go" + version + "." + _go_system + "-" + _go_architecture + if operating_system() == "windows" { ".zip" } else { ".tar.gz" }
+    // where go.dev/dl sends the downloads, with the SHA-256 next to every archive; project.lock keeps it
+    url = "https://dl.google.com/go/" + archive
+    home = tool("go", version, url, sha256_url = url + ".sha256")
+    home + "/bin/" + executable("go")
+}
+
+build_go = fn(
+    name: str,
+    package: str = ".",
+    directory: str = ".",
+    // the go command to start with, see go_version
+    version: str = go_version,
+    // auto: go.mod picks the Go, local: exactly version
+    toolchain: "auto" | "local" = "auto",
+    flags: list<str> = list(),
+    test_flags: list<str> = list(),
+    // files the program embeds besides its sources, like templates for //go:embed
+    inputs: list<str> = list(),
+    // after the defaults, so they win: GOOS=linux to cross compile, GOPROXY for a proxy
+    environment: list<str> = list(),
+    dependencies: list<module> = list(),
+) -> module {
+    go = go_tool(version)
+    program = "{output}/" + executable(name)
+
+    build_command(
+        name,
+        list(go, "build", "-trimpath", "-o", program) + flags + list(package),
+        inputs = list("**/*.go", "go.mod", "go.sum") + inputs,
+        outputs = list(program),
+        environment = list(
+            "GOTOOLCHAIN=" + toolchain,
+            "GOMODCACHE=" + cache_directory("go/modules"),
+            "GOCACHE=" + cache_directory("go/build"),
+            // a module cache build-script can remove, also on Windows
+            "GOFLAGS=-modcacherw",
+        ) + environment,
+        // set outside of build-script they change what go build writes
+        environment_inputs = list("GOOS", "GOARCH", "CGO_ENABLED", "GOEXPERIMENT"),
+        directory = directory,
+        run = list(program),
+        test = list(go, "test") + test_flags + list("./..."),
+        dependencies = dependencies,
+    )
+}
