@@ -1,2 +1,2 @@
 // a Go program with a test
-build_go("{name}")
+build_go("{{build.name}}")

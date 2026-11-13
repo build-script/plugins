@@ -8,5 +8,5 @@ func greeting(name string) string {
 }
 
 func main() {
-	fmt.Println(greeting("{name}"))
+	fmt.Println(greeting("{{build.name}}"))
 }
