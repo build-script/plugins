@@ -19,7 +19,8 @@ go_tool = fn(version: str) -> str {
 
 build_go = fn(
     name: str,
-    package: str = ".",
+    // the package with main: src/ like the other kinds of build-script, "." for sources next to go.mod
+    package: str = "./src",
     directory: str = ".",
     // the go command to start with, see go_version
     version: str = go_version,
