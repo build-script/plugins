@@ -26,16 +26,21 @@ build_go = fn(
     version: str = go_version,
     // auto: go.mod picks the Go, local: exactly version
     toolchain: "auto" | "local" = "auto",
+    // the system and processor to build for, like goos = "linux", goarch = "arm64": this machine unless
+    // GOOS and GOARCH are set outside of build-script
+    goos: str = env("GOOS", _go_system),
+    goarch: str = env("GOARCH", _go_architecture),
     flags: list<str> = list(),
     test_flags: list<str> = list(),
     // files the program embeds besides its sources, like templates for //go:embed
     inputs: list<str> = list(),
-    // after the defaults, so they win: GOOS=linux to cross compile, GOPROXY for a proxy
+    // after the defaults, so they win: GOPROXY for a proxy, CGO_ENABLED=0
     environment: list<str> = list(),
     dependencies: list<module> = list(),
 ) -> module {
     go = go_tool(version)
-    program = "{output}/" + executable(name)
+    // named for the system it runs on, not for this one: no .exe for linux on windows
+    program = "{output}/" + name + if goos == "windows" { ".exe" } else { "" }
 
     build_command(
         name,
@@ -44,6 +49,8 @@ build_go = fn(
         outputs = list(program),
         environment = list(
             "GOTOOLCHAIN=" + toolchain,
+            "GOOS=" + goos,
+            "GOARCH=" + goarch,
             "GOMODCACHE=" + cache_directory("go/modules"),
             "GOCACHE=" + cache_directory("go/build"),
             // a module cache build-script can remove, also on Windows
