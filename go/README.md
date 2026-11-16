@@ -28,26 +28,27 @@ server/
 
 ## build_go
 
-| Parameter      | Default                            | Meaning                                                                                    |
-|----------------|------------------------------------|--------------------------------------------------------------------------------------------|
-| `name`         | required                           | Name of the module and of the program                                                      |
-| `package`      | `"./src"`                          | The package with `main`, `"."` for sources next to `go.mod`                                |
-| `directory`    | `"."`                              | Module directory with `go.mod`, relative to the script                                     |
-| `version`      | `go_version`, `"1.27.4"`           | The Go that starts the build, see [Which Go builds](#which-go-builds)                      |
-| `toolchain`    | `"auto"`                           | `"auto"`: `go.mod` picks the Go, `"local"`: exactly `version`                              |
-| `goos`         | `GOOS`, otherwise this system      | The system to build for, like `"linux"`, `"windows"` or `"darwin"`                         |
-| `goarch`       | `GOARCH`, otherwise this processor | The processor to build for, like `"arm64"` or `"amd64"`                                    |
-| `flags`        | `[]`                               | Further arguments of `go build`, like `"-ldflags=-s -w"` or `"-race"`                      |
-| `test_flags`   | `[]`                               | Further arguments of `go test`, like `"-run", "TestParse"`                                 |
-| `inputs`       | `[]`                               | Files the program embeds besides its Go sources, like templates for `//go:embed`           |
-| `environment`  | `[]`                               | `"NAME=value"` for `go build`, `go test` and `run`, after those of the plugin, so they win |
-| `dependencies` | `[]`                               | Modules that build before this one and count as its inputs                                 |
+| Parameter      | Default                                | Meaning                                                                                                          |
+|----------------|----------------------------------------|------------------------------------------------------------------------------------------------------------------|
+| `name`         | required                               | Name of the module and of the program                                                                            |
+| `package`      | `"./src"`                              | The package with `main`, `"."` for sources next to `go.mod`                                                      |
+| `directory`    | `"."`                                  | Module directory with `go.mod`, relative to the script                                                           |
+| `version`      | `go_version`, `"1.27.4"`               | The Go that starts the build, see [Which Go builds](#which-go-builds)                                            |
+| `toolchain`    | `"auto"`                               | `"auto"`: `go.mod` picks the Go, `"local"`: exactly `version`                                                    |
+| `targets`      | `[]`                                   | The targets it is built for, like `list("linux-aarch64", "windows-x86_64")`, see [Other systems](#other-systems) |
+| `goos`         | `GOOS`, otherwise that of the target   | The system to build for, for systems without a target of build-script, like `"freebsd"`                          |
+| `goarch`       | `GOARCH`, otherwise that of the target | The processor to build for, like `"riscv64"`                                                                     |
+| `flags`        | `[]`                                   | Further arguments of `go build`, like `"-ldflags=-s -w"` or `"-race"`                                            |
+| `test_flags`   | `[]`                                   | Further arguments of `go test`, like `"-run", "TestParse"`                                                       |
+| `inputs`       | `[]`                                   | Files the program embeds besides its Go sources, like templates for `//go:embed`                                 |
+| `environment`  | `[]`                                   | `"NAME=value"` for `go build`, `go test` and `run`, after those of the plugin, so they win                       |
+| `dependencies` | `[]`                                   | Modules that build before this one and count as its inputs                                                       |
 
 The plugin also defines `go_version`, the default version, and `go_tool(version)`, the path of the `go` command of a version, for scripts that run `go` with `build_command` themselves, like `go generate`.
 
 ## How it builds
 
-- `go build -trimpath -o build/commands/<name>/<name> <package>` in the module directory. On Windows, and for `goos = "windows"`, the program ends in `.exe`.
+- `go build -trimpath -o build/commands/<name>/<name> <package>` in the module directory, for another target into `build/<target>/commands/<name>/`. For Windows the program ends in `.exe`.
 - It builds again when a `.go` file below the module directory, `go.mod`, `go.sum`, a file of `inputs`, a module of `dependencies` or one of `GOOS`, `GOARCH`, `CGO_ENABLED` and `GOEXPERIMENT` of the shell changed.
 - `build run` starts the program in the module directory, arguments after `--` go to it.
 - `build test` runs `go test ./...` in the module directory. The test passes or fails by the exit code of `go test`, the summary has no count of the single tests.
@@ -61,11 +62,16 @@ With `toolchain = "auto"`, `GOTOOLCHAIN=auto`, the `go` and `toolchain` lines of
 ## Other systems
 
 ```kotlin
-build_go("server", goos = "linux", goarch = "arm64")
-build_go("tool", goos = "windows", goarch = "amd64")    // build/commands/tool/tool.exe
+// build/linux-aarch64/commands/server/server and build/windows-x86_64/commands/server/server.exe
+build_go("server", targets = list("linux-aarch64", "windows-x86_64"))
 ```
 
-Both build on every machine. `build run` and `build test` of a program for another system fail, like they would without build-script. Such programs build without cgo, which Go turns off for other systems unless `CGO_ENABLED=1` and a C compiler for the target are set.
+`targets` takes the targets of build-script, see [cpp.md](https://github.com/build-script/build/blob/main/docs/cpp.md#other-targets), and builds on every machine. `GOOS` and `GOARCH` follow from the target: `linux-aarch64` is `linux` and `arm64`, `android-armv7` is `android` and `arm` with `GOARM=7`. `host_target()` among them builds for this machine too. `build --target linux-aarch64` builds for that target instead of those the script names.
+
+- `build run --target <name>` starts the program of that target, through the runner `runner.<target>` names unless this machine runs it itself, see [cpp.md](https://github.com/build-script/build/blob/main/docs/cpp.md#programs-of-other-targets).
+- `build test --target <name>` runs `go test` on this machine, which starts the tests itself: that works for targets this machine runs, like `macos-x86_64` on Apple silicon.
+- `goos` and `goarch` name a system without a target of build-script, like `build_go("tool", goos = "freebsd", goarch = "amd64")`, into `build/commands/tool/`.
+- Programs for other systems build without cgo, which Go turns off for them unless `CGO_ENABLED=1` and a C compiler for the target are set.
 
 ## Modules and caches
 

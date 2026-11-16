@@ -50,7 +50,7 @@ build_docs("site")
 [go/plugin.build](../go/plugin.build) is the reference. Its parts:
 
 ```kotlin
-// Go programs with the toolchain of go.dev: build, run and test
+// Go programs with the toolchain of go.dev: build, run and test, for this machine or other targets
 ```
 
 The first comment line describes the plugin in `build plugins` and in the choice of `build new`.
@@ -58,22 +58,28 @@ The first comment line describes the plugin in `build plugins` and in the choice
 ```kotlin
 go_version = "1.27.4"
 
+// the names go.dev gives this machine, the go command runs on it
+_go_host_system = if host_operating_system() == "macos" { "darwin" } else { host_operating_system() }
+_go_host_architecture = if host_architecture() == "aarch64" { "arm64" } else { "amd64" }
+
+// the names Go gives the target the script is evaluated for: linux-aarch64 is GOOS=linux GOARCH=arm64
 _go_system = if operating_system() == "macos" { "darwin" } else { operating_system() }
-_go_architecture = if architecture() == "aarch64" { "arm64" } else { "amd64" }
+_go_architecture = if architecture() == "aarch64" { "arm64" } else if architecture() == "x86_64" { "amd64" } else if architecture() == "x86" { "386" } else { "arm" }
 ```
 
-Public values are defaults that scripts may read or override, `go_version` here. Names starting with `_` stay inside the plugin: helpers and the names the vendor gives this machine.
+Public values are defaults that scripts may read or override, `go_version` here. Names starting with `_` stay inside the plugin: helpers and the names the vendor gives this machine and the target.
+A script whose modules have targets is evaluated once for every target, and its plugins with it. `operating_system()` and `architecture()` describe the target of that evaluation, the `host_` functions the machine that runs the tools, see [language.md](https://github.com/build-script/build/blob/main/docs/language.md#functions-every-script-has).
 
 ```kotlin
 go_tool = fn(version: str) -> str {
-    archive = "go" + version + "." + _go_system + "-" + _go_architecture + if operating_system() == "windows" { ".zip" } else { ".tar.gz" }
+    archive = "go" + version + "." + _go_host_system + "-" + _go_host_architecture + if host_operating_system() == "windows" { ".zip" } else { ".tar.gz" }
     url = "https://dl.google.com/go/" + archive
     home = tool("go", version, url, sha256_url = url + ".sha256")
-    home + "/bin/" + executable("go")
+    home + "/bin/" + host_executable("go")
 }
 ```
 
-`tool` downloads the archive for this machine once, checks it against the SHA-256 the vendor publishes, and returns its directory. The version is a parameter, so a project can build with another one without a new release of the plugin.
+`tool` downloads the archive for this machine once, checks it against the SHA-256 the vendor publishes, and returns its directory. It picks the archive with the `host_` functions: the compiler runs on this machine, also when it builds for another target. The version is a parameter, so a project can build with another one without a new release of the plugin.
 
 ```kotlin
 build_go = fn(
@@ -82,6 +88,7 @@ build_go = fn(
     directory: str = ".",
     version: str = go_version,
     toolchain: "auto" | "local" = "auto",
+    targets: list<target> = list(),
     goos: str = env("GOOS", _go_system),
     goarch: str = env("GOARCH", _go_architecture),
     flags: list<str> = list(),
@@ -92,7 +99,7 @@ build_go = fn(
 ) -> module {
 ```
 
-The function a script calls. Everything but the name has a default, so `build_go("server")` is a whole build. `toolchain` takes only the two strings it lists, a typo is an error that names the nearest one.
+The function a script calls. Everything but the name has a default, so `build_go("server")` is a whole build. `toolchain` takes only the two strings it lists, a typo is an error that names the nearest one. `targets` takes the names of build-script's targets, like `list("linux-aarch64", "windows-x86_64")`.
 
 ```kotlin
     go = go_tool(version)
@@ -116,12 +123,14 @@ The function a script calls. Everything but the name has a default, so `build_go
         run = list(program),
         test = list(go, "test") + test_flags + list("./..."),
         dependencies = dependencies,
+        targets = targets,
     )
 }
 ```
 
 - `inputs` names every file the compiler reads. build-script runs the command again only when one of them changed, so a missing input means a stale program.
-- `outputs` are below `{output}`, which is `build/commands/<name>/` in the module directory and emptied before every run.
+- `outputs` are below `{output}`, which is `build/commands/<name>/` in the module directory, for another target `build/<target>/commands/<name>/`, and emptied before every run.
+- `targets` goes on to `build_command`, which runs the command once for every target, each time with `goos` and `goarch` of that target.
 - The caches of the tool go to `cache_directory`, not into the project or the home directory: `clean --cache` removes them with the rest of build-script's cache, and they are shared by all projects.
 - `environment` comes after the plugin's own variables, so a script can override them. `environment_inputs` are variables of the user's shell that change what the compiler writes: their values count as inputs.
 - `run` is what `build run` starts, `test` what `build test` runs.
@@ -134,7 +143,8 @@ The function a script calls. Everything but the name has a default, so `build_go
 - **Versions as parameters** with a public default, like `version: str = go_version`. A new version of the language should not need a new release of the plugin.
 - **A SHA-256 for every download**, with `sha256` or `sha256_url`. Without one, the first download is trusted and only `project.lock` checks the following ones.
 - **Strings as types** for fixed choices, like `toolchain: "auto" | "local"`, instead of `str`.
-- **Programs named for the system they run on.** `executable(name)` gives `name.exe` on Windows. For cross builds the name depends on the target, like `goos` above.
+- **Programs named for the system they run on.** `executable(name)` gives `name.exe` for a Windows target, `host_executable(name)` for the programs of this machine, like the compiler of a tool.
+- **A `targets` parameter** of type `list<target>`, passed to `build_command`, so a script can build the module for other systems. The plugin reads the target with `operating_system()` and `architecture()`, and downloads its tools with the `host_` functions.
 - **No shell.** Commands are a program and its arguments: `sh -c` and `cmd /c` do not exist everywhere.
 - **`fail("...")`** for what the plugin does not support, like a system the vendor has no download for, with a message that says what to do instead.
 - **Files the plugin brings** are found through `plugin_directory`, not through paths relative to the script.
