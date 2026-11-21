@@ -1,7 +1,7 @@
-// Go programs with the toolchain of go.dev: build, run and test, for this machine or other targets
+// Go programs with the toolchain of go.dev: build, run and test, for this machine or other targets. The
+// libraries are in the script: build-script writes src/go.mod of them, go mod tidy completes it and writes go.sum.
 
-// only the go command the build starts with: the go and toolchain lines of go.mod pick the Go
-// that builds (GOTOOLCHAIN=auto), like when go runs on its own
+// the Go that builds, and the go line of go.mod
 go_version = "1.27.4"
 
 // the names go.dev gives this machine, the go command runs on it
@@ -29,15 +29,85 @@ go_tool = fn(version: str) -> str {
     home + "/bin/" + host_executable("go")
 }
 
+// the go.mod of the module and the libraries the script lists, which go mod tidy completes
+_go_mod = fn(module: str, version: str, libraries: list<str>) -> str {
+    requires = if libraries == list() { "" } else { "\nrequire (\n\t" + replace(join(libraries, "\n\t"), "@", " ") + "\n)\n" }
+    "// Written by build-script from project.build, changes here are lost: build install adds libraries\n"
+        + "module " + module + "\n\ngo " + version + "\n" + requires
+}
+
+// a go.mod of its own next to the sources, like that of a Go project brought along: src/go.mod takes its place
+_go_mod_of_its_own = fn(directory: str, name: str) -> str {
+    if read_file(directory + "/go.mod", "") == "" {
+        ""
+    } else {
+        fail(directory + "/go.mod is not used, build-script writes src/go.mod of the libraries of " + name + ": its require lines go into libraries = list(\"path@version\"), then the file goes. The sources stay in src/, their imports lose the /src.")
+    }
+}
+
+// what every go command of a module runs with, of every target
+_go_environment = fn() -> list<str> {
+    list(
+        "GOTOOLCHAIN=local",
+        "GOMODCACHE=" + cache_directory("go/modules"),
+        "GOCACHE=" + cache_directory("go/build"),
+        // a module cache build-script can remove, also on Windows
+        "GOFLAGS=-modcacherw",
+    )
+}
+
+// prints path@version of a library, the newest without a version: what build install writes
+_go_resolve = fn(go: str) -> list<str> {
+    list(go, "-C", "src", "list", "-m", "-f", "{{.Path}}@{{.Version}}", "{name}@{version}")
+}
+
+// src/go.mod of the libraries, completed by go mod tidy with those they need and go.sum, checked against
+// sum.golang.org: once for every target, and for every program of the module. build_go makes one of its own,
+// programs of one module share one: build_go("server", module = tools, package = "./cmd/server")
+go_module = fn(
+    name: str,
+    // the path of the module in go.mod, example.com/<name> without one: its packages below src/ are imported
+    // as <module>/<directory>. Paths without a dot in their first part are those of the standard library.
+    module: str = "",
+    // the libraries of the module, like github.com/spf13/cobra@v1.9.1: build install adds them
+    libraries: list<str> = list(),
+    directory: str = ".",
+    // the Go that tidies, also the go line of go.mod: a library that needs a newer one says so
+    version: str = go_version,
+    environment: list<str> = list(),
+) -> module {
+    _go_mod_of_its_own(directory, name)
+    go = go_tool(version)
+
+    build_command(
+        name,
+        list(go, "-C", "src", "mod", "tidy"),
+        // go.sum starts empty: go mod tidy writes what the libraries need, also when there are none
+        files = list(file("src/go.mod", _go_mod(if module == "" { "example.com/" + name } else { module }, version, libraries)), file("src/go.sum", "")),
+        libraries = libraries,
+        direct_libraries = list(go, "-C", "src", "list", "-mod=readonly", "-m", "-f", "{{if not (or .Main .Indirect)}}{{.Path}}@{{.Version}}{{end}}", "all"),
+        resolve = _go_resolve(go),
+        // the imports of the sources say what the module needs
+        inputs = list("src/**/*.go"),
+        outputs = list("src/go.mod", "src/go.sum"),
+        environment = _go_environment() + environment,
+        directory = directory,
+    )
+}
+
 build_go = fn(
     name: str,
-    // the package with main: src/ like the other kinds of build-script, "." for sources next to go.mod
-    package: str = "./src",
+    // the path of the module in go.mod, example.com/<name> without one, or a go_module the program shares with
+    // others
+    module: str | module = "",
+    // the libraries of the program, like github.com/spf13/cobra@v1.9.1: build install adds them. Those of a
+    // shared go_module go there.
+    libraries: list<str> = list(),
+    // the package with main, below src/ where go.mod is
+    package: str = ".",
     directory: str = ".",
-    // the go command to start with, see go_version
+    // the Go that builds, also the go line of go.mod: a library that needs a newer one says so
     version: str = go_version,
-    // auto: go.mod picks the Go, local: exactly version
-    toolchain: "auto" | "local" = "auto",
     // the targets the program is built for, like targets = list("linux-aarch64", "windows-x86_64"), each into
     // build/<target>/commands/<name>/: this machine without them
     targets: list<target> = list(),
@@ -47,12 +117,24 @@ build_go = fn(
     goarch: str = env("GOARCH", _go_architecture),
     flags: list<str> = list(),
     test_flags: list<str> = list(),
-    // files the program embeds besides its sources, like templates for //go:embed
+    // files below src/ the program embeds besides its sources, like templates for //go:embed
     inputs: list<str> = list(),
     // after the defaults, so they win: GOPROXY for a proxy, CGO_ENABLED=0
     environment: list<str> = list(),
     dependencies: list<module> = list(),
 ) -> module {
+    shared = type(module) == "module"
+
+    if shared && libraries != list() {
+        fail("the libraries of " + name + " go into the go_module it shares")
+    }
+
+    // named for the module of the script, before go_module names it after its own
+    _go_mod_of_its_own(directory, name)
+
+    // the module of the program alone is named after it, its go.mod is the same for every target
+    modules = if shared { module } else { go_module(name + "-modules", module = if module == "" { "example.com/" + name } else { module }, libraries = libraries, directory = directory, version = version, environment = environment) }
+
     go = go_tool(version)
     // named for the system it runs on, not for this one: no .exe for linux on windows
     program = "{output}/" + name + if goos == "windows" { ".exe" } else { "" }
@@ -61,24 +143,17 @@ build_go = fn(
 
     build_command(
         name,
-        list(go, "build", "-trimpath", "-o", program) + flags + list(package),
-        inputs = list("**/*.go", "go.mod", "go.sum") + inputs,
+        list(go, "-C", "src", "build", "-mod=readonly", "-trimpath", "-o", program) + flags + list(package),
+        resolve = _go_resolve(go),
+        inputs = list("src/**/*.go") + inputs,
         outputs = list(program),
-        environment = list(
-            "GOTOOLCHAIN=" + toolchain,
-            "GOOS=" + goos,
-            "GOARCH=" + goarch,
-            "GOMODCACHE=" + cache_directory("go/modules"),
-            "GOCACHE=" + cache_directory("go/build"),
-            // a module cache build-script can remove, also on Windows
-            "GOFLAGS=-modcacherw",
-        ) + arm + environment,
+        environment = _go_environment() + list("GOOS=" + goos, "GOARCH=" + goarch) + arm + environment,
         // set outside of build-script they change what go build writes
         environment_inputs = list("GOOS", "GOARCH", "CGO_ENABLED", "GOEXPERIMENT"),
         directory = directory,
         run = list(program),
-        test = list(go, "test") + test_flags + list("./..."),
-        dependencies = dependencies,
+        test = list(go, "-C", "src", "test", "-mod=readonly") + test_flags + list("./..."),
+        dependencies = list(modules) + dependencies,
         targets = targets,
     )
 }
