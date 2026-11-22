@@ -121,6 +121,8 @@ build_go = fn(
     inputs: list<str> = list(),
     // after the defaults, so they win: GOPROXY for a proxy, CGO_ENABLED=0
     environment: list<str> = list(),
+    // modules the program needs built, like libraries of build_c its import "C" takes: their headers and
+    // libraries come without #cgo lines, they build with the compiler of the library, also for other targets
     dependencies: list<module> = list(),
 ) -> module {
     shared = type(module) == "module"
@@ -140,16 +142,24 @@ build_go = fn(
     program = "{output}/" + name + if goos == "windows" { ".exe" } else { "" }
     // 32 bit ARM in the version Android runs
     arm = if goarch == "arm" { list("GOARM=7") } else { list() }
+    // with libraries of C cgo is on also for another target, with their compiler. After the -O2 -g of Go its
+    // flags, and a define of their headers: the cache of Go knows no headers outside the package.
+    cgo = if c_libraries(dependencies) == list() {
+        list()
+    } else {
+        list("CGO_ENABLED=1", "CC={c_compiler}", "CGO_CFLAGS=-O2 -g {compile_flags}", "CGO_LDFLAGS=-O2 -g {link_flags}")
+    }
 
     build_command(
         name,
         list(go, "-C", "src", "build", "-mod=readonly", "-trimpath", "-o", program) + flags + list(package),
         resolve = _go_resolve(go),
-        inputs = list("src/**/*.go") + inputs,
+        // with the C, C++ and assembly cgo compiles of the packages
+        inputs = list("src/**/*.go", "src/**/*.c", "src/**/*.h", "src/**/*.cc", "src/**/*.cpp", "src/**/*.hpp", "src/**/*.s") + inputs,
         outputs = list(program),
-        environment = _go_environment() + list("GOOS=" + goos, "GOARCH=" + goarch) + arm + environment,
+        environment = _go_environment() + list("GOOS=" + goos, "GOARCH=" + goarch) + arm + cgo + environment,
         // set outside of build-script they change what go build writes
-        environment_inputs = list("GOOS", "GOARCH", "CGO_ENABLED", "GOEXPERIMENT"),
+        environment_inputs = list("GOOS", "GOARCH", "CGO_ENABLED", "CGO_CFLAGS", "CGO_LDFLAGS", "CC", "GOEXPERIMENT"),
         directory = directory,
         run = list(program),
         test = list(go, "-C", "src", "test", "-mod=readonly") + test_flags + list("./..."),
