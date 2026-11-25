@@ -1,0 +1,126 @@
+// Vulkan with the SDK of LunarG for this machine: glslc translates the shaders, the validation layers check debug
+// builds, on macOS MoltenVK is the driver. The headers and the loader, which go into the program, are ports of
+// vcpkg for every target.
+use cpp
+
+// the SDK of LunarG this plugin installs, once and without asking, after its license was accepted
+vulkan_sdk_version = "1.4.363.1"
+
+// how LunarG names this machine and the file of its SDK: an archive for Linux, installers for macOS and Windows
+_vulkan_system = host_operating_system()
+_vulkan_platform = if _vulkan_system == "macos" { "mac" } else { _vulkan_system }
+_vulkan_file = if _vulkan_system == "macos" {
+    "vulkansdk-macos-" + vulkan_sdk_version + ".zip"
+} else if _vulkan_system == "windows" {
+    "vulkansdk-windows-X64-" + vulkan_sdk_version + ".exe"
+} else {
+    "vulkansdk-linux-x86_64-" + vulkan_sdk_version + ".tar.xz"
+}
+_vulkan_kind = if _vulkan_system == "macos" { "zip" } else if _vulkan_system == "windows" { "exe" } else { "tar.xz" }
+
+// the installers of LunarG into a directory of their own, without asking and without changing the system: copy_only
+// leaves out the runtime in System32, the layers in the registry and the PATH of Windows
+_vulkan_quiet = list("--root", "{directory}", "--accept-licenses", "--default-answer", "--confirm-command", "install", "copy_only=1")
+_vulkan_install = if _vulkan_system == "macos" {
+    list("{archive}/vulkansdk-macOS-" + vulkan_sdk_version + ".app/Contents/MacOS/vulkansdk-macOS-" + vulkan_sdk_version) + _vulkan_quiet
+} else if _vulkan_system == "windows" {
+    list("{archive}") + _vulkan_quiet
+} else {
+    list()
+}
+
+// the directory of the SDK with its programs, libraries and layers: bin/ and share/vulkan/, on Windows Bin/
+vulkan_sdk = fn() -> str {
+    if host_architecture() != "x86_64" && _vulkan_system != "macos" {
+        fail("the SDK of LunarG is for x86_64 on Linux and Windows, not for " + host_target())
+    }
+
+    root = tool(
+        "vulkan-sdk",
+        vulkan_sdk_version,
+        "https://sdk.lunarg.com/sdk/download/" + vulkan_sdk_version + "/" + _vulkan_platform + "/" + _vulkan_file,
+        sha256_url = "https://sdk.lunarg.com/sdk/sha/" + vulkan_sdk_version + "/" + _vulkan_platform + "/vulkan_sdk." + _vulkan_kind + ".txt",
+        install = _vulkan_install,
+        // the parts of the SDK are open source, mostly MIT or Apache 2.0: its register of their licenses
+        license = "https://vulkan.lunarg.com/license/",
+    )
+
+    if _vulkan_system == "macos" { root + "/macOS" } else if _vulkan_system == "windows" { root } else { root + "/x86_64" }
+}
+
+// a program of the SDK, like glslc or vulkaninfo
+vulkan_tool = fn(name: str) -> str {
+    vulkan_sdk() + if _vulkan_system == "windows" { "/Bin/" } else { "/bin/" } + host_executable(name)
+}
+
+// GLSL to SPIR-V with glslc, each shader on its own into a header named after it: a program includes it as the
+// words of an array, static const uint32_t code[] = #include "double.comp.h" ; and needs no files when it runs.
+// The stage comes from the extension: .vert, .frag, .comp and the others of glslc.
+build_shaders = fn(
+    name: str,
+    // globs relative to the directory, like "shaders/*.vert"
+    sources: list<str>,
+    // after the defaults, like "--target-env=vulkan1.3" or "-O"
+    flags: list<str> = list(),
+    directory: str = ".",
+) -> module {
+    build_command(
+        name,
+        list(vulkan_tool("glslc"), "-mfmt=c") + flags + list("{input}", "-o", "{output}/{input_name}.h"),
+        inputs = sources,
+        outputs = list("{output}/{input_name}.h"),
+        per_input = true,
+        directory = directory,
+    )
+}
+
+// What a program of Vulkan depends on: the headers and the loader of vcpkg, or with volk the headers and volk, which
+// loads the loader when the program starts. When it runs, debug builds get the validation layers of the SDK and on
+// macOS the driver, MoltenVK or KosmicKrisp, which needs macOS 26 on Apple silicon and a GPU of its own.
+vulkan = fn(
+    layers: bool = true,
+    volk: bool = false,
+    driver: "moltenvk" | "kosmickrisp" = "moltenvk",
+) -> list<str | module> {
+    sdk = vulkan_sdk()
+
+    // the loader of vcpkg for Linux with the surfaces of X11, which GLFW and SDL take
+    loader = if operating_system() == "linux" { "vulkan-loader[xcb,xlib]" } else { "vulkan-loader" }
+    layer_dir = if _vulkan_system == "windows" { sdk + "/Bin" } else { sdk + "/share/vulkan/explicit_layer.d" }
+
+    // a shell with the rights of an administrator on Windows makes the loader ignore these variables
+    checked = if layers && !release() {
+        list("VK_ADD_LAYER_PATH=" + layer_dir, "VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation")
+    } else {
+        list()
+    }
+    icd = if driver == "kosmickrisp" { "libkosmickrisp_icd.json" } else { "MoltenVK_icd.json" }
+    drivers = if _vulkan_system == "macos" { list("VK_DRIVER_FILES=" + sdk + "/share/vulkan/icd.d/" + icd) } else { list() }
+
+    list("vulkan-headers", if volk { "volk" } else { loader }, prebuilt_library("vulkan-runtime", environment = checked + drivers))
+}
+
+// A program of Vulkan in one call: its shaders in shaders/ as headers, its sources in src/, what vulkan() brings
+build_vulkan = fn(
+    name: str,
+    // vcpkg ports and modules, like "glfw3"
+    dependencies: list<str | module> = list(),
+    // the shaders, each into <name>.h: those of every stage glslc knows by its extension
+    shaders: list<str> = list("shaders/*.vert", "shaders/*.frag", "shaders/*.comp", "shaders/*.geom", "shaders/*.tesc", "shaders/*.tese"),
+    shader_flags: list<str> = list(),
+    // a library for other programs without it
+    program: bool = true,
+    layers: bool = true,
+    volk: bool = false,
+    driver: "moltenvk" | "kosmickrisp" = "moltenvk",
+    directory: str = ".",
+) -> module {
+    compiled = build_shaders(name + "-shaders", shaders, flags = shader_flags, directory = directory)
+
+    build_cpp(
+        name,
+        dependencies + list(compiled) + vulkan(layers = layers, volk = volk, driver = driver),
+        program = program,
+        directory = directory,
+    )
+}

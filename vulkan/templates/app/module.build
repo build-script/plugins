@@ -1,0 +1,2 @@
+// a Vulkan program that doubles numbers on the GPU with a compute shader, no window needed
+build_vulkan("{{build.name}}")
