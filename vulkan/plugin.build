@@ -48,14 +48,16 @@ vulkan_sdk = fn() -> str {
     if _vulkan_system == "macos" { root + "/macOS" } else if _vulkan_system == "windows" { root } else { root + "/x86_64" }
 }
 
-// a program of the SDK, like glslc or vulkaninfo
+// a program of the SDK, like glslc or vulkaninfo, which is vulkaninfoSDK on Windows
 vulkan_tool = fn(name: str) -> str {
-    vulkan_sdk() + if _vulkan_system == "windows" { "/Bin/" } else { "/bin/" } + host_executable(name)
+    program = if _vulkan_system == "windows" && name == "vulkaninfo" { "vulkaninfoSDK" } else { name }
+    vulkan_sdk() + if _vulkan_system == "windows" { "/Bin/" } else { "/bin/" } + host_executable(program)
 }
 
 // GLSL to SPIR-V with glslc, each shader on its own into a header named after it: a program includes it as the
 // words of an array, static const uint32_t code[] = #include "double.comp.h" ; and needs no files when it runs.
-// The stage comes from the extension: .vert, .frag, .comp and the others of glslc.
+// The stage comes from the extension: .vert, .frag, .comp and the others of glslc. What a shader includes, glslc
+// writes into its depfile: a change of it translates that shader again.
 build_shaders = fn(
     name: str,
     // globs relative to the directory, like "shaders/*.vert"
@@ -66,26 +68,36 @@ build_shaders = fn(
 ) -> module {
     build_command(
         name,
-        list(vulkan_tool("glslc"), "-mfmt=c") + flags + list("{input}", "-o", "{output}/{input_name}.h"),
+        list(vulkan_tool("glslc"), "-mfmt=c", "-MD", "-MF", "{output}/{input_name}.d") + flags + list("{input}", "-o", "{output}/{input_name}.h"),
         inputs = sources,
         outputs = list("{output}/{input_name}.h"),
+        depfile = "{output}/{input_name}.d",
         per_input = true,
         directory = directory,
     )
 }
 
 // What a program of Vulkan depends on: the headers and the loader of vcpkg, or with volk the headers and volk, which
-// loads the loader when the program starts. When it runs, debug builds get the validation layers of the SDK and on
-// macOS the driver, MoltenVK or KosmicKrisp, which needs macOS 26 on Apple silicon and a GPU of its own.
+// loads the loader when the program starts. Android has a loader of its own in the NDK. When it runs, debug builds get
+// the validation layers of the SDK and on macOS the driver, MoltenVK or KosmicKrisp, which needs macOS 26 on Apple
+// silicon and a GPU of its own.
 vulkan = fn(
     layers: bool = true,
     volk: bool = false,
     driver: "moltenvk" | "kosmickrisp" = "moltenvk",
+    // the surfaces of X11 in the loader for Linux, which windows of GLFW and SDL need: built against the headers of
+    // X11 of this machine, so not for another target and not with the GCC of build-script, which sees only its own
+    window: bool = true,
+    // of the module with what the programs need when they run: one of its own for every call
+    name: str = "vulkan-runtime",
 ) -> list<str | module> {
     sdk = vulkan_sdk()
+    android = operating_system() == "android"
 
-    // the loader of vcpkg for Linux with the surfaces of X11, which GLFW and SDL take
-    loader = if operating_system() == "linux" { "vulkan-loader[xcb,xlib]" } else { "vulkan-loader" }
+    loader = if operating_system() == "linux" && window && target() == host_target() { "vulkan-loader[xcb,xlib]" } else { "vulkan-loader" }
+    linked = if volk { list("volk") } else if android { list() } else { list(loader) }
+    // the libvulkan.so of the NDK, which every Android since API level 24 has
+    ndk = if android && !volk { list("-lvulkan") } else { list() }
     layer_dir = if _vulkan_system == "windows" { sdk + "/Bin" } else { sdk + "/share/vulkan/explicit_layer.d" }
 
     // a shell with the rights of an administrator on Windows makes the loader ignore these variables
@@ -97,7 +109,7 @@ vulkan = fn(
     icd = if driver == "kosmickrisp" { "libkosmickrisp_icd.json" } else { "MoltenVK_icd.json" }
     drivers = if _vulkan_system == "macos" { list("VK_DRIVER_FILES=" + sdk + "/share/vulkan/icd.d/" + icd) } else { list() }
 
-    list("vulkan-headers", if volk { "volk" } else { loader }, prebuilt_library("vulkan-runtime", environment = checked + drivers))
+    list("vulkan-headers") + linked + list(prebuilt_library(name, link_flags = ndk, environment = checked + drivers))
 }
 
 // A program of Vulkan in one call: its shaders in shaders/ as headers, its sources in src/, what vulkan() brings
@@ -108,19 +120,35 @@ build_vulkan = fn(
     // the shaders, each into <name>.h: those of every stage glslc knows by its extension
     shaders: list<str> = list("shaders/*.vert", "shaders/*.frag", "shaders/*.comp", "shaders/*.geom", "shaders/*.tesc", "shaders/*.tese"),
     shader_flags: list<str> = list(),
-    // a library for other programs without it
+    // a library for other programs without it, shared like for an app of Android
     program: bool = true,
+    shared: bool = false,
     layers: bool = true,
     volk: bool = false,
     driver: "moltenvk" | "kosmickrisp" = "moltenvk",
+    window: bool = true,
+    // as for build_cpp
+    toolchain: "auto" | "system" | "zig" | "gcc" = "auto",
+    cpp_standard: str = "c++20",
+    flags: list<str> = list(),
+    defines: list<str> = list(),
+    targets: list<target> = list(),
+    test_dependencies: list<str | module> = list(),
     directory: str = ".",
 ) -> module {
     compiled = build_shaders(name + "-shaders", shaders, flags = shader_flags, directory = directory)
 
     build_cpp(
         name,
-        dependencies + list(compiled) + vulkan(layers = layers, volk = volk, driver = driver),
+        dependencies + list(compiled) + vulkan(layers = layers, volk = volk, driver = driver, window = window, name = name + "-vulkan"),
         program = program,
+        shared = shared,
+        toolchain = toolchain,
+        cpp_standard = cpp_standard,
+        flags = flags,
+        defines = defines,
+        targets = targets,
+        test_dependencies = test_dependencies,
         directory = directory,
     )
 }
