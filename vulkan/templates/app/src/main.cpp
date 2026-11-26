@@ -1,5 +1,6 @@
-// Doubles 16 numbers on the GPU with the compute shader shaders/double.comp, which build_vulkan translates into
-// double.comp.h. No window: it runs on every driver, also on lavapipe of Mesa without a GPU.
+// Doubles 16 numbers on the GPU with the compute shader shaders/double.comp, which build_vulkan translates to SPIR-V
+// and embeds as double_comp_spv in double.comp.spv.h. No window: it runs on every driver, also on lavapipe of Mesa.
+// The SPIR-V is in SHADER_DIR too, for a program that loads it at run time.
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
@@ -8,9 +9,7 @@
 #include <cstring>
 #include <vector>
 
-static const uint32_t shader[] =
-#include "double.comp.h"
-    ;
+#include "double.comp.spv.h"
 
 static const uint32_t COUNT = 16;
 
@@ -160,8 +159,8 @@ int main() {
     check(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout), "vkCreatePipelineLayout");
 
     VkShaderModuleCreateInfo module_info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    module_info.codeSize = sizeof(shader);
-    module_info.pCode = shader;
+    module_info.codeSize = double_comp_spv_size;
+    module_info.pCode = double_comp_spv;
     VkShaderModule shader_module;
     check(vkCreateShaderModule(device, &module_info, nullptr, &shader_module), "vkCreateShaderModule");
 

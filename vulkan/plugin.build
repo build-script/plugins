@@ -54,27 +54,186 @@ vulkan_tool = fn(name: str) -> str {
     vulkan_sdk() + if _vulkan_system == "windows" { "/Bin/" } else { "/bin/" } + host_executable(program)
 }
 
-// GLSL to SPIR-V with glslc, each shader on its own into a header named after it: a program includes it as the
-// words of an array, static const uint32_t code[] = #include "double.comp.h" ; and needs no files when it runs.
-// The stage comes from the extension: .vert, .frag, .comp and the others of glslc. What a shader includes, glslc
-// writes into its depfile: a change of it translates that shader again.
-build_shaders = fn(
+// The shaders of build_shaders: what every compiler of the chain takes. Debug builds keep the sources and the lines in
+// the SPIR-V for debuggers like RenderDoc, release builds optimize. Each shader goes to <destination>/<file>.spv, what
+// it includes into its depfile: a change of it translates that shader again.
+_shader_options = fn(defines: list<str>, include_dirs: list<str>, flags: list<str>) -> list<str> {
+    prefixed("-D", defines) + prefixed("-I", include_dirs) + flags
+}
+
+// GLSL with glslc, the stage by the extension: .vert, .frag, .comp, .geom, .tesc, .tese, .mesh, .task and those of ray
+// tracing, .rgen, .rint, .rahit, .rchit, .rmiss and .rcall. #pragma shader_stage names it in a file of another name.
+build_glsl = fn(
     name: str,
-    // globs relative to the directory, like "shaders/*.vert"
     sources: list<str>,
-    // after the defaults, like "--target-env=vulkan1.3" or "-O"
+    destination: str,
+    defines: list<str> = list(),
+    include_dirs: list<str> = list(),
+    flags: list<str> = list(),
+    target_env: str = "vulkan1.3",
+    directory: str = ".",
+) -> module {
+    build_command(
+        name,
+        list(vulkan_tool("glslc"), "--target-env=" + target_env, if release() { "-O" } else { "-g" }, "-MD", "-MF", "{output}/{input_name}.d")
+            + _shader_options(defines, include_dirs, flags)
+            + list("{input}", "-o", destination + "/{input_name}.spv"),
+        inputs = sources,
+        outputs = list(destination + "/{input_name}.spv"),
+        depfile = "{output}/{input_name}.d",
+        per_input = true,
+        directory = directory,
+    )
+}
+
+// HLSL with dxc, the compiler of HLSL, for the stage of its profile and its entry point: every file of one call is of
+// one stage, like build_hlsl("lights", list("shaders/*.ps.hlsl"), "build/shaders/lights", "ps_6_0"). dxc translates
+// nothing when it writes a depfile: a command of its own writes those first.
+build_hlsl = fn(
+    name: str,
+    sources: list<str>,
+    destination: str,
+    // like vs_6_0, ps_6_0, cs_6_0 or lib_6_3 of ray tracing
+    profile: str,
+    entry: str = "main",
+    defines: list<str> = list(),
+    include_dirs: list<str> = list(),
+    flags: list<str> = list(),
+    target_env: str = "vulkan1.3",
+    directory: str = ".",
+) -> module {
+    dxc = list(vulkan_tool("dxc"), "-spirv", "-T", profile, "-E", entry, "-fspv-target-env=" + target_env) + _shader_options(defines, include_dirs, flags)
+    included = build_command(
+        name + "-includes",
+        dxc + list("-M", "-MF", "{output}/{input_name}.d", "{input}"),
+        inputs = sources,
+        outputs = list("{output}/{input_name}.d"),
+        depfile = "{output}/{input_name}.d",
+        per_input = true,
+        directory = directory,
+    )
+
+    build_command(
+        name,
+        dxc + list(if release() { "-O3" } else { "-Zi" }, "{input}", "-Fo", destination + "/{input_name}.spv"),
+        inputs = sources,
+        outputs = list(destination + "/{input_name}.spv"),
+        depfile = "build/commands/" + name + "-includes/{input_name}.d",
+        per_input = true,
+        dependencies = list(included),
+        directory = directory,
+    )
+}
+
+// Slang, and HLSL by its [shader("...")] attributes, with slangc: every entry point of a file into one SPIR-V module,
+// named as in the source
+build_slang = fn(
+    name: str,
+    sources: list<str>,
+    destination: str,
+    defines: list<str> = list(),
+    include_dirs: list<str> = list(),
     flags: list<str> = list(),
     directory: str = ".",
 ) -> module {
     build_command(
         name,
-        list(vulkan_tool("glslc"), "-mfmt=c", "-MD", "-MF", "{output}/{input_name}.d") + flags + list("{input}", "-o", "{output}/{input_name}.h"),
+        list(vulkan_tool("slangc"), "{input}", "-target", "spirv", "-fvk-use-entrypoint-name", if release() { "-O2" } else { "-g" }, "-depfile", "{output}/{input_name}.d")
+            + _shader_options(defines, include_dirs, flags)
+            + list("-o", destination + "/{input_name}.spv"),
         inputs = sources,
-        outputs = list("{output}/{input_name}.h"),
+        outputs = list(destination + "/{input_name}.spv"),
         depfile = "{output}/{input_name}.d",
         per_input = true,
         directory = directory,
     )
+}
+
+// The whole chain of the shaders of a program, each step for each shader only when it changed: GLSL, HLSL and Slang to
+// SPIR-V into build/shaders/<name>, checked by spirv-val, the reflection of spirv-cross as JSON next to it, the SPIR-V
+// as text of spirv-dis, and embedded as headers: double.comp.spv becomes double_comp_spv and double_comp_spv_size in
+// double.comp.spv.h. The files stay too, for a program that loads them and loads them again when a build changed them.
+build_shaders = fn(
+    name: str,
+    // GLSL, globs relative to the directory like "shaders/*.vert"
+    sources: list<str> = list(),
+    hlsl: list<str> = list(),
+    // the profile of dxc for the HLSL, like ps_6_0: without one slangc takes it by its [shader("...")] attributes
+    hlsl_profile: str = "",
+    hlsl_entry: str = "main",
+    slang: list<str> = list(),
+    // "NAME" or "NAME=value" for every shader
+    defines: list<str> = list(),
+    include_dirs: list<str> = list(),
+    // for every compiler, after the defaults
+    flags: list<str> = list(),
+    target_env: str = "vulkan1.3",
+    embed: bool = true,
+    validate: bool = true,
+    // the descriptors, inputs and entry points of each shader as JSON
+    reflect: bool = false,
+    // the SPIR-V as text, <file>.spvasm
+    disassemble: bool = false,
+    directory: str = ".",
+) -> list<module> {
+    destination = "build/shaders/" + name
+
+    glsl_modules = if sources == list() {
+        list()
+    } else {
+        list(build_glsl(name + "-glsl", sources, destination, defines = defines, include_dirs = include_dirs, flags = flags, target_env = target_env, directory = directory))
+    }
+    hlsl_modules = if hlsl == list() {
+        list()
+    } else if hlsl_profile == "" {
+        list(build_slang(name + "-hlsl", hlsl, destination, defines = defines, include_dirs = include_dirs, flags = flags, directory = directory))
+    } else {
+        list(build_hlsl(name + "-hlsl", hlsl, destination, hlsl_profile, entry = hlsl_entry, defines = defines, include_dirs = include_dirs, flags = flags, target_env = target_env, directory = directory))
+    }
+    slang_modules = if slang == list() {
+        list()
+    } else {
+        list(build_slang(name + "-slang", slang, destination, defines = defines, include_dirs = include_dirs, flags = flags, directory = directory))
+    }
+
+    compiled = glsl_modules + hlsl_modules + slang_modules
+    spirv = list(destination + "/*.spv")
+    some = compiled != list()
+
+    checked = if validate && some {
+        list(build_command(name + "-validate", list(vulkan_tool("spirv-val"), "--target-env", target_env, "{input}"), inputs = spirv, dependencies = compiled, per_input = true, directory = directory))
+    } else {
+        list()
+    }
+    reflected = if reflect && some {
+        list(build_command(
+            name + "-reflect",
+            list(vulkan_tool("spirv-cross"), "{input}", "--reflect", "--output", destination + "/{input_name}.json"),
+            inputs = spirv,
+            outputs = list(destination + "/{input_name}.json"),
+            dependencies = compiled,
+            per_input = true,
+            directory = directory,
+        ))
+    } else {
+        list()
+    }
+    listed = if disassemble && some {
+        list(build_command(
+            name + "-disassemble",
+            list(vulkan_tool("spirv-dis"), "{input}", "-o", destination + "/{input_name}asm"),
+            inputs = spirv,
+            outputs = list(destination + "/{input_name}asm"),
+            dependencies = compiled,
+            per_input = true,
+            directory = directory,
+        ))
+    } else {
+        list()
+    }
+    embedded = if embed && some { list(embed_files(name + "-embedded", compiled, words = true, directory = directory)) } else { list() }
+
+    compiled + checked + reflected + listed + embedded
 }
 
 // What a program of Vulkan depends on: the headers and the loader of vcpkg, or with volk the headers and volk, which
@@ -112,14 +271,28 @@ vulkan = fn(
     list("vulkan-headers") + linked + list(prebuilt_library(name, link_flags = ndk, environment = checked + drivers))
 }
 
-// A program of Vulkan in one call: its shaders in shaders/ as headers, its sources in src/, what vulkan() brings
+// A program of Vulkan in one call: its shaders in shaders/ through the whole chain of build_shaders, embedded, and as
+// files SHADER_DIR names relative to the directory build run starts it in, its sources in src/, what vulkan() brings
 build_vulkan = fn(
     name: str,
     // vcpkg ports and modules, like "glfw3"
     dependencies: list<str | module> = list(),
-    // the shaders, each into <name>.h: those of every stage glslc knows by its extension
-    shaders: list<str> = list("shaders/*.vert", "shaders/*.frag", "shaders/*.comp", "shaders/*.geom", "shaders/*.tesc", "shaders/*.tese"),
+    // the shaders of GLSL of every stage glslc knows by its extension
+    shaders: list<str> = list(
+        "shaders/*.vert", "shaders/*.frag", "shaders/*.comp", "shaders/*.geom", "shaders/*.tesc", "shaders/*.tese",
+        "shaders/*.mesh", "shaders/*.task", "shaders/*.rgen", "shaders/*.rint", "shaders/*.rahit", "shaders/*.rchit",
+        "shaders/*.rmiss", "shaders/*.rcall",
+    ),
+    hlsl: list<str> = list("shaders/*.hlsl"),
+    hlsl_profile: str = "",
+    hlsl_entry: str = "main",
+    slang: list<str> = list("shaders/*.slang"),
+    shader_defines: list<str> = list(),
+    shader_include_dirs: list<str> = list(),
     shader_flags: list<str> = list(),
+    target_env: str = "vulkan1.3",
+    reflect_shaders: bool = false,
+    disassemble_shaders: bool = false,
     // a library for other programs without it, shared like for an app of Android
     program: bool = true,
     shared: bool = false,
@@ -136,17 +309,31 @@ build_vulkan = fn(
     test_dependencies: list<str | module> = list(),
     directory: str = ".",
 ) -> module {
-    compiled = build_shaders(name + "-shaders", shaders, flags = shader_flags, directory = directory)
+    compiled = build_shaders(
+        name + "-shaders",
+        sources = shaders,
+        hlsl = hlsl,
+        hlsl_profile = hlsl_profile,
+        hlsl_entry = hlsl_entry,
+        slang = slang,
+        defines = shader_defines,
+        include_dirs = shader_include_dirs,
+        flags = shader_flags,
+        target_env = target_env,
+        reflect = reflect_shaders,
+        disassemble = disassemble_shaders,
+        directory = directory,
+    )
 
     build_cpp(
         name,
-        dependencies + list(compiled) + vulkan(layers = layers, volk = volk, driver = driver, window = window, name = name + "-vulkan"),
+        dependencies + compiled + vulkan(layers = layers, volk = volk, driver = driver, window = window, name = name + "-vulkan"),
         program = program,
         shared = shared,
         toolchain = toolchain,
         cpp_standard = cpp_standard,
         flags = flags,
-        defines = defines,
+        defines = defines + list("SHADER_DIR=\"build/shaders/" + name + "-shaders\""),
         targets = targets,
         test_dependencies = test_dependencies,
         directory = directory,
