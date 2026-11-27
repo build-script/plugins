@@ -1,0 +1,4 @@
+// a Go program that doubles numbers on the GPU with a compute shader of Vulkan, through go-vk
+{{build.identifier}}_shaders = build_shaders("{{build.name}}-shaders", list("shaders/*.comp"), embed = false)
+
+build_go("{{build.name}}", module = "{{build.domain}}/{{build.name}}", dependencies = list(vulkan()) + {{build.identifier}}_shaders)

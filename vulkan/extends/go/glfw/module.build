@@ -1,0 +1,4 @@
+// a Go program that draws a triangle with Vulkan into a window of GLFW, through go-vk
+{{build.identifier}}_shaders = build_shaders("{{build.name}}-shaders", list("shaders/*.vert", "shaders/*.frag"), embed = false)
+
+build_go("{{build.name}}", module = "{{build.domain}}/{{build.name}}", dependencies = list(vulkan(), "glfw3") + {{build.identifier}}_shaders)
