@@ -1,0 +1,4 @@
+// a Kotlin program that doubles numbers on the GPU with a compute shader of Vulkan, through LWJGL
+{{build.identifier}}_shaders = build_shaders("{{build.name}}-shaders", list("shaders/*.comp"), embed = false)
+
+build_kotlin("{{build.name}}", list(vulkan()) + {{build.identifier}}_shaders, main_class = "{{build.package}}.MainKt")

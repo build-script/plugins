@@ -1,7 +1,7 @@
 // Vulkan for every language with the SDK of LunarG for this machine: its compilers translate the shaders, the
 // validation layers check debug builds, on macOS MoltenVK is the driver. vulkan() is what C and C++ take of vcpkg for
-// every target, Kotlin and Java of LWJGL and Go of go-vk. build new cpp:vulkan, c:vulkan and their -glfw start a
-// program that computes or draws into a window.
+// every target, Kotlin and Java of LWJGL and Go of go-vk. build new cpp:vulkan, c:vulkan, kotlin:vulkan,
+// java:vulkan and their -glfw start a program that computes or draws into a window.
 use cpp
 
 // the SDK of LunarG this plugin installs, once and without asking, after its license was accepted
