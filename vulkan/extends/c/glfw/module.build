@@ -1,0 +1,4 @@
+// a C program that draws a triangle with Vulkan into a window of GLFW
+{{build.identifier}}_shaders = build_shaders("{{build.name}}-shaders", list("shaders/*.vert", "shaders/*.frag"))
+
+build_c("{{build.name}}", list(vulkan(), "glfw3") + {{build.identifier}}_shaders, program = true)

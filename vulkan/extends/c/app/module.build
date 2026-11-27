@@ -1,0 +1,4 @@
+// a C program that doubles numbers on the GPU with a compute shader of Vulkan, no window needed
+{{build.identifier}}_shaders = build_shaders("{{build.name}}-shaders", list("shaders/*.comp"))
+
+build_c("{{build.name}}", list(vulkan()) + {{build.identifier}}_shaders, program = true)
