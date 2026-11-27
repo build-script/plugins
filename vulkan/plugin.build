@@ -284,10 +284,10 @@ vulkan = fn(
     icd = if driver == "kosmickrisp" { "libkosmickrisp_icd.json" } else { "MoltenVK_icd.json" }
     drivers = if _vulkan_system == "macos" { list("VK_DRIVER_FILES=" + sdk + "/share/vulkan/icd.d/" + icd) } else { list() }
 
-    // LWJGL takes the loader of the SDK, with its layers and drivers, instead of the MoltenVK of its natives, which a
-    // jar keeps for machines without the SDK. Windows has a loader of its own.
-    loader_file = if _vulkan_system == "macos" { sdk + "/lib/libvulkan.1.dylib" } else { sdk + "/lib/libvulkan.so.1" }
-    jvm = if _vulkan_system == "windows" || android { list() } else { list("-Dorg.lwjgl.vulkan.libname=" + loader_file) }
+    // on macOS LWJGL takes the loader of the SDK, with its layers and drivers, instead of the MoltenVK of its natives,
+    // which a jar keeps for machines without the SDK. Linux and Windows have a loader of the system, the SDK for Linux
+    // brings none.
+    jvm = if _vulkan_system == "macos" && !android { list("-Dorg.lwjgl.vulkan.libname=" + sdk + "/lib/libvulkan.1.dylib") } else { list() }
     moltenvk = if _vulkan_system == "macos" { list("org.lwjgl:lwjgl-vulkan:" + lwjgl_version + ":" + _lwjgl_natives) } else { list() }
 
     bundle(
