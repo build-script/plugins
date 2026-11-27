@@ -1,6 +1,6 @@
-// Doubles 16 numbers on the GPU with the compute shader shaders/double.comp, which build_vulkan translates to SPIR-V
+// Doubles 16 numbers on the GPU with the compute shader shaders/double.comp, which build_shaders translates to SPIR-V
 // and embeds as double_comp_spv in double.comp.spv.h. No window: it runs on every driver, also on lavapipe of Mesa.
-// The SPIR-V is in SHADER_DIR too, for a program that loads it at run time.
+// The SPIR-V is in build/shaders/{{build.name}}-shaders too, for a program that loads it at run time.
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
@@ -38,7 +38,7 @@ int main() {
 
     VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     application.pApplicationName = "{{build.name}}";
-    application.apiVersion = VK_API_VERSION_1_1;
+    application.apiVersion = VK_API_VERSION_1_3;
 
     const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
     VkInstanceCreateInfo instance_info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};

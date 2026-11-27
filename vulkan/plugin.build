@@ -1,6 +1,6 @@
-// Vulkan with the SDK of LunarG for this machine: glslc translates the shaders, the validation layers check debug
-// builds, on macOS MoltenVK is the driver. The headers and the loader, which go into the program, are ports of
-// vcpkg for every target.
+// Vulkan for every language with the SDK of LunarG for this machine: its compilers translate the shaders, the
+// validation layers check debug builds, on macOS MoltenVK is the driver. vulkan() is what C and C++ take of vcpkg for
+// every target, Kotlin and Java of LWJGL and Go of go-vk. build new cpp:vulkan starts a program that computes.
 use cpp
 
 // the SDK of LunarG this plugin installs, once and without asking, after its license was accepted
@@ -46,6 +46,20 @@ vulkan_sdk = fn() -> str {
     )
 
     if _vulkan_system == "macos" { root + "/macOS" } else if _vulkan_system == "windows" { root } else { root + "/x86_64" }
+}
+
+// LWJGL, the Vulkan of Kotlin and Java, and go-vk, that of Go, which loads the loader when the program starts
+lwjgl_version = "3.4.3"
+go_vk_version = "v1.4.366-0.4.0"
+
+// how LWJGL names its natives for this machine, where the JVM runs
+_lwjgl_natives = "natives-" + _vulkan_system + if host_architecture() == "aarch64" { "-arm64" } else { "" }
+
+// a module of LWJGL with its natives for this machine, like lwjgl("glfw") for the windows of GLFW: what a program of
+// Kotlin or Java depends on next to vulkan()
+lwjgl = fn(name: str) -> list<str> {
+    coordinate = "org.lwjgl:lwjgl-" + name + ":" + lwjgl_version
+    list(coordinate, coordinate + ":" + _lwjgl_natives)
 }
 
 // a program of the SDK, like glslc or vulkaninfo, which is vulkaninfoSDK on Windows
@@ -236,10 +250,11 @@ build_shaders = fn(
     compiled + checked + reflected + listed + embedded
 }
 
-// What a program of Vulkan depends on: the headers and the loader of vcpkg, or with volk the headers and volk, which
-// loads the loader when the program starts. Android has a loader of its own in the NDK. When it runs, debug builds get
-// the validation layers of the SDK and on macOS the driver, MoltenVK or KosmicKrisp, which needs macOS 26 on Apple
-// silicon and a GPU of its own.
+// What a program of Vulkan depends on, whatever its language. C and C++ take the headers and the loader of vcpkg for
+// their target, or with volk the headers and volk, which loads the loader when the program starts; Android has a
+// loader of its own in the NDK. Kotlin and Java take LWJGL, Go takes go-vk. When it runs, debug builds get the
+// validation layers of the SDK and on macOS the driver, MoltenVK or KosmicKrisp, which needs macOS 26 on Apple silicon
+// and a GPU of its own.
 vulkan = fn(
     layers: bool = true,
     volk: bool = false,
@@ -247,9 +262,9 @@ vulkan = fn(
     // the surfaces of X11 in the loader for Linux, which windows of GLFW and SDL need: built against the headers of
     // X11 of this machine, so not for another target and not with the GCC of build-script, which sees only its own
     window: bool = true,
-    // of the module with what the programs need when they run: one of its own for every call
-    name: str = "vulkan-runtime",
-) -> list<str | module> {
+    // of the bundle, its module with what the programs need when they run is <name>-runtime
+    name: str = "vulkan",
+) -> module {
     sdk = vulkan_sdk()
     android = operating_system() == "android"
 
@@ -268,7 +283,19 @@ vulkan = fn(
     icd = if driver == "kosmickrisp" { "libkosmickrisp_icd.json" } else { "MoltenVK_icd.json" }
     drivers = if _vulkan_system == "macos" { list("VK_DRIVER_FILES=" + sdk + "/share/vulkan/icd.d/" + icd) } else { list() }
 
-    list("vulkan-headers") + linked + list(prebuilt_library(name, link_flags = ndk, environment = checked + drivers))
+    // LWJGL takes the loader of the SDK, with its layers and drivers, instead of the MoltenVK of its natives, which a
+    // jar keeps for machines without the SDK. Windows has a loader of its own.
+    loader_file = if _vulkan_system == "macos" { sdk + "/lib/libvulkan.1.dylib" } else { sdk + "/lib/libvulkan.so.1" }
+    jvm = if _vulkan_system == "windows" || android { list() } else { list("-Dorg.lwjgl.vulkan.libname=" + loader_file) }
+    moltenvk = if _vulkan_system == "macos" { list("org.lwjgl:lwjgl-vulkan:" + lwjgl_version + ":" + _lwjgl_natives) } else { list() }
+
+    bundle(
+        name,
+        ports = list("vulkan-headers") + linked,
+        maven = list("org.lwjgl:lwjgl:" + lwjgl_version, "org.lwjgl:lwjgl:" + lwjgl_version + ":" + _lwjgl_natives, "org.lwjgl:lwjgl-vulkan:" + lwjgl_version) + moltenvk,
+        go = list("github.com/bbredesen/go-vk@" + go_vk_version),
+        modules = list(prebuilt_library(name + "-runtime", link_flags = ndk, environment = checked + drivers, jvm_flags = jvm)),
+    )
 }
 
 // A program of Vulkan in one call: its shaders in shaders/ through the whole chain of build_shaders, embedded, and as
@@ -327,7 +354,7 @@ build_vulkan = fn(
 
     build_cpp(
         name,
-        dependencies + compiled + vulkan(layers = layers, volk = volk, driver = driver, window = window, name = name + "-vulkan"),
+        dependencies + compiled + list(vulkan(layers = layers, volk = volk, driver = driver, window = window, name = name + "-vulkan")),
         program = program,
         shared = shared,
         toolchain = toolchain,
