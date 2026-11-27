@@ -1,5 +1,6 @@
 // Go programs with the toolchain of go.dev: build, run and test, for this machine or other targets. The
 // libraries are in the script: build-script writes src/go.mod of them, go mod tidy completes it and writes go.sum.
+use c
 
 // the Go that builds, and the go line of go.mod
 go_version = "1.27.4"
@@ -121,21 +122,32 @@ build_go = fn(
     inputs: list<str> = list(),
     // after the defaults, so they win: GOPROXY for a proxy, CGO_ENABLED=0
     environment: list<str> = list(),
-    // modules the program needs built, like libraries of build_c its import "C" takes: their headers and
-    // libraries come without #cgo lines, they build with the compiler of the library, also for other targets
-    dependencies: list<module> = list(),
+    // what its import "C" takes: libraries of build_c, ports of vcpkg like "glfw3" and bundles like vulkan(). Their
+    // headers and libraries come without #cgo lines, they build with the compiler of the library, also for other
+    // targets, and the program runs with their shared libraries. The libraries of Go a bundle names join libraries.
+    dependencies: list<str | module> = list(),
 ) -> module {
     shared = type(module) == "module"
+    bundled_libraries = bundled(dependencies, "go")
 
     if shared && libraries != list() {
         fail("the libraries of " + name + " go into the go_module it shares")
+    }
+    if shared && bundled_libraries != list() {
+        fail("the libraries of Go its bundles name go into the go_module " + name + " shares: libraries = bundled(list(...), \"go\")")
     }
 
     // named for the module of the script, before go_module names it after its own
     _go_mod_of_its_own(directory, name)
 
     // the module of the program alone is named after it, its go.mod is the same for every target
-    modules = if shared { module } else { go_module(name + "-modules", module = if module == "" { "example.com/" + name } else { module }, libraries = libraries, directory = directory, version = version, environment = environment) }
+    modules = if shared { module } else { go_module(name + "-modules", module = if module == "" { "example.com/" + name } else { module }, libraries = libraries + bundled_libraries, directory = directory, version = version, environment = environment) }
+
+    // the ports, also those of bundles, in a library of C of only their headers, built for the target with its
+    // compiler: cgo takes its flags like those of a library of the script
+    ports = bundled(dependencies, "ports")
+    port_library = if ports == list() { list() } else { list(build_c(name + "-ports", ports, sources = list(), directory = directory)) }
+    native = bundled_modules(dependencies) + port_library
 
     go = go_tool(version)
     // named for the system it runs on, not for this one: no .exe for linux on windows
@@ -144,7 +156,7 @@ build_go = fn(
     arm = if goarch == "arm" { list("GOARM=7") } else { list() }
     // with libraries of C cgo is on also for another target, with their compiler. After the -O2 -g of Go its
     // flags, and a define of their headers: the cache of Go knows no headers outside the package.
-    cgo = if c_libraries(dependencies) == list() {
+    cgo = if c_libraries(native) == list() {
         list()
     } else {
         list("CGO_ENABLED=1", "CC={c_compiler}", "CGO_CFLAGS=-O2 -g {compile_flags}", "CGO_LDFLAGS=-O2 -g {link_flags}")
@@ -163,7 +175,7 @@ build_go = fn(
         directory = directory,
         run = list(program),
         test = list(go, "-C", "src", "test", "-mod=readonly") + test_flags + list("./..."),
-        dependencies = list(modules) + dependencies,
+        dependencies = list(modules) + native,
         targets = targets,
     )
 }
