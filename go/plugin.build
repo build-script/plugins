@@ -1,5 +1,5 @@
 // Go programs with the toolchain of go.dev: build, run and test, for this machine or other targets. The
-// libraries are in the script: build-script writes src/go.mod of them, go mod tidy completes it and writes go.sum.
+// libraries are in the script: xkit writes src/go.mod of them, go mod tidy completes it and writes go.sum.
 use c
 
 // the Go that builds, and the go line of go.mod
@@ -33,7 +33,7 @@ go_tool = fn(version: str) -> str {
 // the go.mod of the module and the libraries the script lists, which go mod tidy completes
 _go_mod = fn(module: str, version: str, libraries: list<str>) -> str {
     requires = if libraries == list() { "" } else { "\nrequire (\n\t" + replace(join(libraries, "\n\t"), "@", " ") + "\n)\n" }
-    "// Written by build-script from project.build, changes here are lost: build install adds libraries\n"
+    "// Written by xkit from project.build, changes here are lost: xkit install adds libraries\n"
         + "module " + module + "\n\ngo " + version + "\n" + requires
 }
 
@@ -42,7 +42,7 @@ _go_mod_of_its_own = fn(directory: str, name: str) -> str {
     if read_file(directory + "/go.mod", "") == "" {
         ""
     } else {
-        fail(directory + "/go.mod is not used, build-script writes src/go.mod of the libraries of " + name + ": its require lines go into libraries = list(\"path@version\"), then the file goes. The sources stay in src/, their imports lose the /src.")
+        fail(directory + "/go.mod is not used, xkit writes src/go.mod of the libraries of " + name + ": its require lines go into libraries = list(\"path@version\"), then the file goes. The sources stay in src/, their imports lose the /src.")
     }
 }
 
@@ -52,12 +52,12 @@ _go_environment = fn() -> list<str> {
         "GOTOOLCHAIN=local",
         "GOMODCACHE=" + cache_directory("go/modules"),
         "GOCACHE=" + cache_directory("go/build"),
-        // a module cache build-script can remove, also on Windows
+        // a module cache xkit can remove, also on Windows
         "GOFLAGS=-modcacherw",
     )
 }
 
-// prints path@version of a library, the newest without a version: what build install writes
+// prints path@version of a library, the newest without a version: what xkit install writes
 _go_resolve = fn(go: str) -> list<str> {
     list(go, "-C", "src", "list", "-m", "-f", "{{.Path}}@{{.Version}}", "{name}@{version}")
 }
@@ -70,7 +70,7 @@ go_module = fn(
     // the path of the module in go.mod, example.com/<name> without one: its packages below src/ are imported
     // as <module>/<directory>. Paths without a dot in their first part are those of the standard library.
     module: str = "",
-    // the libraries of the module, like github.com/spf13/cobra@v1.9.1: build install adds them
+    // the libraries of the module, like github.com/spf13/cobra@v1.9.1: xkit install adds them
     libraries: list<str> = list(),
     directory: str = ".",
     // the Go that tidies, also the go line of go.mod: a library that needs a newer one says so
@@ -101,7 +101,7 @@ build_go = fn(
     // the path of the module in go.mod, example.com/<name> without one, or a go_module the program shares with
     // others
     module: str | module = "",
-    // the libraries of the program, like github.com/spf13/cobra@v1.9.1: build install adds them. Those of a
+    // the libraries of the program, like github.com/spf13/cobra@v1.9.1: xkit install adds them. Those of a
     // shared go_module go there.
     libraries: list<str> = list(),
     // the package with main, below src/ where go.mod is
@@ -112,7 +112,7 @@ build_go = fn(
     // the targets the program is built for, like targets = list("linux-aarch64", "windows-x86_64"), each into
     // build/<target>/commands/<name>/: this machine without them
     targets: list<target> = list(),
-    // GOOS and GOARCH of the target, unless they are set outside of build-script. Once the only way to build
+    // GOOS and GOARCH of the target, unless they are set outside of xkit. Once the only way to build
     // for another system, targets names them now.
     goos: str = env("GOOS", _go_system),
     goarch: str = env("GOARCH", _go_architecture),
@@ -170,7 +170,7 @@ build_go = fn(
         inputs = list("src/**/*.go", "src/**/*.c", "src/**/*.h", "src/**/*.cc", "src/**/*.cpp", "src/**/*.hpp", "src/**/*.s") + inputs,
         outputs = list(program),
         environment = _go_environment() + list("GOOS=" + goos, "GOARCH=" + goarch) + arm + cgo + environment,
-        // set outside of build-script they change what go build writes
+        // set outside of xkit they change what go build writes
         environment_inputs = list("GOOS", "GOARCH", "CGO_ENABLED", "CGO_CFLAGS", "CGO_LDFLAGS", "CC", "GOEXPERIMENT"),
         directory = directory,
         run = list(program),

@@ -1,6 +1,6 @@
 // Vulkan for every language with the SDK of LunarG for this machine: its compilers translate the shaders, the
 // validation layers check debug builds, on macOS MoltenVK is the driver. vulkan() is what C and C++ take of vcpkg for
-// every target, Kotlin and Java of LWJGL and Go of go-vk. build new cpp:vulkan, cpp:vulkan-glfw, c:vulkan,
+// every target, Kotlin and Java of LWJGL and Go of go-vk. xkit new cpp:vulkan, cpp:vulkan-glfw, c:vulkan,
 // kotlin:vulkan, java:vulkan, go:vulkan and their -glfw start a program that computes or draws into a window.
 use cpp
 
@@ -261,7 +261,7 @@ vulkan = fn(
     volk: bool = false,
     driver: "moltenvk" | "kosmickrisp" = "moltenvk",
     // the surfaces of X11 in the loader for Linux, which windows of GLFW and SDL need: built against the headers of
-    // X11 of this machine, so not for another target and not with the GCC of build-script, which sees only its own
+    // X11 of this machine, so not for another target and not with the GCC of xkit, which sees only its own
     window: bool = true,
     // of the bundle, its module with what the programs need when they run is <name>-runtime
     name: str = "vulkan",
@@ -300,7 +300,7 @@ vulkan = fn(
 }
 
 // A program of Vulkan in one call: its shaders in shaders/ through the whole chain of build_shaders, embedded, and as
-// files SHADER_DIR names relative to the directory build run starts it in, its sources in src/, what vulkan() brings
+// files SHADER_DIR names relative to the directory xkit run starts it in, its sources in src/, what vulkan() brings
 build_vulkan = fn(
     name: str,
     // vcpkg ports and modules, like "glfw3"

@@ -22,7 +22,7 @@ func check(err error, what string) {
 	}
 }
 
-// useLoader takes the loader vulkan() builds, which build run puts on the path of the system
+// useLoader takes the loader vulkan() builds, which xkit run puts on the path of the system
 func useLoader() {
 	switch runtime.GOOS {
 	case "darwin":
@@ -32,7 +32,7 @@ func useLoader() {
 	}
 }
 
-// spirv reads a shader of build_shaders, relative to the module, where build run starts the program
+// spirv reads a shader of build_shaders, relative to the module, where xkit run starts the program
 func spirv(name string) []uint32 {
 	bytes, err := os.ReadFile(filepath.Join("build", "shaders", "{{build.name}}-shaders", name))
 	check(err, "reading "+name)

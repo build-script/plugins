@@ -1,10 +1,10 @@
 # Writing a plugin
 
-A plugin is a build script with functions that turn a call in `project.build` into a module. It is made of three things build-script gives every script:
+A plugin is a build script with functions that turn a call in `project.build` into a module. It is made of three things xkit gives every script:
 
-- [`build_command`](https://github.com/build-script/build/blob/main/docs/plugins.md#build_command) runs a program as a module: with declared inputs and outputs, only when they changed, with `run` and `test` for `build run` and `build test`.
-- [`tool`](https://github.com/build-script/build/blob/main/docs/plugins.md#tool) downloads the program once per version, checked against its SHA-256 and `project.lock`.
-- [The build language](https://github.com/build-script/build/blob/main/docs/language.md): functions with typed parameters and defaults, conditions, lists, strings as types for fixed choices.
+- [`build_command`](https://github.com/xkit-build/xkit/blob/main/docs/plugins.md#build_command) runs a program as a module: with declared inputs and outputs, only when they changed, with `run` and `test` for `xkit run` and `xkit test`.
+- [`tool`](https://github.com/xkit-build/xkit/blob/main/docs/plugins.md#tool) downloads the program once per version, checked against its SHA-256 and `project.lock`.
+- [The build language](https://github.com/xkit-build/xkit/blob/main/docs/language.md): functions with typed parameters and defaults, conditions, lists, strings as types for fixed choices.
 
 ## Start in your project
 
@@ -43,7 +43,7 @@ use "./tools/docs.build"
 build_docs("site")
 ```
 
-`build` builds the site once and then only when a file in `docs/` or `mkdocs.yml` changed, `build run` serves it. This plugin needs `mkdocs` installed. The next step is to bring the program along with `tool`, like the Go plugin does.
+`xkit` builds the site once and then only when a file in `docs/` or `mkdocs.yml` changed, `xkit run` serves it. This plugin needs `mkdocs` installed. The next step is to bring the program along with `tool`, like the Go plugin does.
 
 ## A plugin, step by step
 
@@ -53,7 +53,7 @@ build_docs("site")
 // Go programs with the toolchain of go.dev: build, run and test, for this machine or other targets
 ```
 
-The first comment line describes the plugin in `build plugins` and in the choice of `build new`.
+The first comment line describes the plugin in `xkit plugins` and in the choice of `xkit new`.
 
 ```kotlin
 go_version = "1.27.4"
@@ -68,7 +68,7 @@ _go_architecture = if architecture() == "aarch64" { "arm64" } else if architectu
 ```
 
 Public values are defaults that scripts may read or override, `go_version` here. Names starting with `_` stay inside the plugin: helpers and the names the vendor gives this machine and the target.
-A script whose modules have targets is evaluated once for every target, and its plugins with it. `operating_system()` and `architecture()` describe the target of that evaluation, the `host_` functions the machine that runs the tools, see [language.md](https://github.com/build-script/build/blob/main/docs/language.md#functions-every-script-has).
+A script whose modules have targets is evaluated once for every target, and its plugins with it. `operating_system()` and `architecture()` describe the target of that evaluation, the `host_` functions the machine that runs the tools, see [language.md](https://github.com/xkit-build/xkit/blob/main/docs/language.md#functions-every-script-has).
 
 ```kotlin
 go_tool = fn(version: str) -> str {
@@ -99,7 +99,7 @@ build_go = fn(
 ) -> module {
 ```
 
-The function a script calls. Everything but the name has a default, so `build_go("server")` is a whole build. `toolchain` takes only the two strings it lists, a typo is an error that names the nearest one. `targets` takes the names of build-script's targets, like `list("linux-aarch64", "windows-x86_64")`.
+The function a script calls. Everything but the name has a default, so `build_go("server")` is a whole build. `toolchain` takes only the two strings it lists, a typo is an error that names the nearest one. `targets` takes the names of xkit's targets, like `list("linux-aarch64", "windows-x86_64")`.
 
 ```kotlin
     go = go_tool(version)
@@ -128,17 +128,17 @@ The function a script calls. Everything but the name has a default, so `build_go
 }
 ```
 
-- `inputs` names every file the compiler reads. build-script runs the command again only when one of them changed, so a missing input means a stale program.
+- `inputs` names every file the compiler reads. xkit runs the command again only when one of them changed, so a missing input means a stale program.
 - `outputs` are below `{output}`, which is `build/commands/<name>/` in the module directory, for another target `build/<target>/commands/<name>/`, and emptied before every run.
 - `targets` goes on to `build_command`, which runs the command once for every target, each time with `goos` and `goarch` of that target.
-- The caches of the tool go to `cache_directory`, not into the project or the home directory: `clean --cache` removes them with the rest of build-script's cache, and they are shared by all projects.
+- The caches of the tool go to `cache_directory`, not into the project or the home directory: `clean --cache` removes them with the rest of xkit's cache, and they are shared by all projects.
 - `environment` comes after the plugin's own variables, so a script can override them. `environment_inputs` are variables of the user's shell that change what the compiler writes: their values count as inputs.
-- `run` is what `build run` starts, `test` what `build test` runs.
+- `run` is what `xkit run` starts, `test` what `xkit test` runs.
 
 ## Guidelines
 
 - **One function per kind of module**, named `build_<language>`, which returns `module`. `name` comes first, everything else has a default.
-- **A `directory` parameter**, passed to `build_command`. `build add` writes `directory = "<name>"` into the call, so a module of the plugin can live next to others.
+- **A `directory` parameter**, passed to `build_command`. `xkit add` writes `directory = "<name>"` into the call, so a module of the plugin can live next to others.
 - **A `dependencies` parameter** of type `list<module>`, passed on, so the module builds after the modules it uses and again when they change.
 - **Versions as parameters** with a public default, like `version: str = go_version`. A new version of the language should not need a new release of the plugin.
 - **A SHA-256 for every download**, with `sha256` or `sha256_url`. Without one, the first download is trusted and only `project.lock` checks the following ones.
@@ -148,11 +148,11 @@ The function a script calls. Everything but the name has a default, so `build_go
 - **No shell.** Commands are a program and its arguments: `sh -c` and `cmd /c` do not exist everywhere.
 - **`fail("...")`** for what the plugin does not support, like a system the vendor has no download for, with a message that says what to do instead.
 - **Files the plugin brings** are found through `plugin_directory`, not through paths relative to the script.
-- **JUnit reports** when the test tool can write them: `test = list(tool, "test", "--junit", "{test_reports}/report.xml")` lets `build test` count the tests. Otherwise only the exit code counts.
+- **JUnit reports** when the test tool can write them: `test = list(tool, "test", "--junit", "{test_reports}/report.xml")` lets `xkit test` count the tests. Otherwise only the exit code counts.
 
 ## Templates
 
-Templates are what `build new <plugin>` and `build add <plugin>` copy:
+Templates are what `xkit new <plugin>` and `xkit add <plugin>` copy:
 
 ```
 go/
@@ -171,9 +171,9 @@ go/
 build_go("{{build.name}}")
 ```
 
-- `module.build` holds exactly one call of a function of the plugin, with the placeholders below. Its first comment line describes the template in the choice of `build new`. `new` writes the call into `project.build` after the `use`, `add` adds `directory = "<name>"`.
+- `module.build` holds exactly one call of a function of the plugin, with the placeholders below. Its first comment line describes the template in the choice of `xkit new`. `new` writes the call into `project.build` after the `use`, `add` adds `directory = "<name>"`.
 - Every other file is copied, with the placeholders replaced in its content and its path.
-- `app` is the template without a name: `build new go hello`. Others are named after a colon, `build new go:cli hello`. A plugin with only one template needs no `app`.
+- `app` is the template without a name: `xkit new go hello`. Others are named after a colon, `xkit new go:cli hello`. A plugin with only one template needs no `app`.
 - Templates named `app` or ending in `-app` are programs: `add` puts them after the libraries in the script.
 
 | Placeholder            | Becomes                                                                                       |
@@ -188,9 +188,9 @@ The user is asked for the domain only when a template uses `{{build.domain}}` or
 ## Trying it out
 
 - **As a file:** `use "./path/to/plugin.build"` in a test project loads the plugin as it is on disk, without git.
-- **As the official list:** commit the plugin to a clone of this repository, or to a repository laid out like it, and build with `BUILD_SCRIPT_PLUGINS=file:///path/to/the/clone`. Then `use <name>`, `build plugins` and `build new <name>` take your plugin. Only committed changes count, and tags make releases.
+- **As the official list:** commit the plugin to a clone of this repository, or to a repository laid out like it, and build with `XKIT_PLUGINS=file:///path/to/the/clone`. Then `use <name>`, `xkit plugins` and `xkit new <name>` take your plugin. Only committed changes count, and tags make releases.
 - **Errors** name the line of the plugin next to the call in the script.
-- **On every system:** a plugin that downloads its compiler has to pick the right archive for macOS, Linux and Windows, on ARM and x86. The scenarios of build-script/regressions run on all of them.
+- **On every system:** a plugin that downloads its compiler has to pick the right archive for macOS, Linux and Windows, on ARM and x86. The scenarios of xkit-build/regressions run on all of them.
 
 ## Publishing
 
@@ -210,11 +210,11 @@ What plugins cannot do, today:
 **Modules**
 - Loading a plugin only defines functions. A `build_command` at the top of a plugin is an error: modules come from the calls in the script.
 - One call of `build_command` is one module that runs one command. Steps one after another are several commands that depend on each other.
-- A plugin has no view of the release flag of `build --release`. Release builds need a parameter, like `flags`.
-- The modules of build-script take from a command what [the table](https://github.com/build-script/build/blob/main/docs/plugins.md#build_command) lists: C and C++ sources and headers, jars, Java and Kotlin sources. Other kinds of outputs only reach other commands.
+- A plugin has no view of the release flag of `xkit --release`. Release builds need a parameter, like `flags`.
+- The modules of xkit take from a command what [the table](https://github.com/xkit-build/xkit/blob/main/docs/plugins.md#build_command) lists: C and C++ sources and headers, jars, Java and Kotlin sources. Other kinds of outputs only reach other commands.
 
 **Up to date and caching**
-- build-script knows only what the command declares. It does not see files a command reads without naming them, and it does not sandbox commands.
+- xkit knows only what the command declares. It does not see files a command reads without naming them, and it does not sandbox commands.
 - A command runs whole: when one input changed, the command runs again with all of them. Incremental work is the tool's own, in its caches under `cache_directory`, because `{output}` is emptied before every run.
 - Tests count per test only from JUnit XML reports in `{test_reports}`, otherwise by their exit code.
 
@@ -223,6 +223,6 @@ What plugins cannot do, today:
 - The libraries of a language are left to its own tools, like Go modules, which `go` downloads and checks with `go.sum`. They are not in `project.lock`, and they may need network on the first build.
 
 **The command line**
-- A plugin adds no commands to build-script, and does not change `install`, `idea` or `clean`. `build idea` leaves command modules out.
-- `build run` starts the `run` of a command as it is, `build test` its `test`. Running a program built for another system fails like it would without build-script.
-- The choice of `build new` lists only the templates of the official plugins. Other plugins are started with `build new someone/repository`.
+- A plugin adds no commands to xkit, and does not change `install`, `idea` or `clean`. `xkit idea` leaves command modules out.
+- `xkit run` starts the `run` of a command as it is, `xkit test` its `test`. Running a program built for another system fails like it would without xkit.
+- The choice of `xkit new` lists only the templates of the official plugins. Other plugins are started with `xkit new someone/repository`.

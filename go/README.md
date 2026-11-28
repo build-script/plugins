@@ -9,10 +9,10 @@ server = build_go("server")
 ```
 
 ```bash
-build                # downloads Go once, then go build into build/commands/server/server
-build run            # starts the server
-build test           # go test ./...
-build new go hello   # hello/project.build, go.mod, src/main.go and src/main_test.go
+xkit                # downloads Go once, then go build into build/commands/server/server
+xkit run            # starts the server
+xkit test           # go test ./...
+xkit new go hello   # hello/project.build, go.mod, src/main.go and src/main_test.go
 ```
 
 The sources are in `src/`, next to `go.mod`:
@@ -36,7 +36,7 @@ server/
 | `version`      | `go_version`, `"1.27.4"`               | The Go that starts the build, see [Which Go builds](#which-go-builds)                                            |
 | `toolchain`    | `"auto"`                               | `"auto"`: `go.mod` picks the Go, `"local"`: exactly `version`                                                    |
 | `targets`      | `[]`                                   | The targets it is built for, like `list("linux-aarch64", "windows-x86_64")`, see [Other systems](#other-systems) |
-| `goos`         | `GOOS`, otherwise that of the target   | The system to build for, for systems without a target of build-script, like `"freebsd"`                          |
+| `goos`         | `GOOS`, otherwise that of the target   | The system to build for, for systems without a target of xkit, like `"freebsd"`                                  |
 | `goarch`       | `GOARCH`, otherwise that of the target | The processor to build for, like `"riscv64"`                                                                     |
 | `flags`        | `[]`                                   | Further arguments of `go build`, like `"-ldflags=-s -w"` or `"-race"`                                            |
 | `test_flags`   | `[]`                                   | Further arguments of `go test`, like `"-run", "TestParse"`                                                       |
@@ -50,8 +50,8 @@ The plugin also defines `go_version`, the default version, and `go_tool(version)
 
 - `go build -trimpath -o build/commands/<name>/<name> <package>` in the module directory, for another target into `build/<target>/commands/<name>/`. For Windows the program ends in `.exe`.
 - It builds again when a `.go` file below the module directory, `go.mod`, `go.sum`, a file of `inputs`, a module of `dependencies` or one of `GOOS`, `GOARCH`, `CGO_ENABLED` and `GOEXPERIMENT` of the shell changed.
-- `build run` starts the program in the module directory, arguments after `--` go to it.
-- `build test` runs `go test ./...` in the module directory. The test passes or fails by the exit code of `go test`, the summary has no count of the single tests.
+- `xkit run` starts the program in the module directory, arguments after `--` go to it.
+- `xkit test` runs `go test ./...` in the module directory. The test passes or fails by the exit code of `go test`, the summary has no count of the single tests.
 
 ## Which Go builds
 
@@ -66,17 +66,17 @@ With `toolchain = "auto"`, `GOTOOLCHAIN=auto`, the `go` and `toolchain` lines of
 build_go("server", targets = list("linux-aarch64", "windows-x86_64"))
 ```
 
-`targets` takes the targets of build-script, see [cpp.md](https://github.com/build-script/build/blob/main/docs/cpp.md#other-targets), and builds on every machine. `GOOS` and `GOARCH` follow from the target: `linux-aarch64` is `linux` and `arm64`, `android-armv7` is `android` and `arm` with `GOARM=7`. `host_target()` among them builds for this machine too. `build --target linux-aarch64` builds for that target instead of those the script names.
+`targets` takes the targets of xkit, see [cpp.md](https://github.com/xkit-build/xkit/blob/main/docs/cpp.md#other-targets), and builds on every machine. `GOOS` and `GOARCH` follow from the target: `linux-aarch64` is `linux` and `arm64`, `android-armv7` is `android` and `arm` with `GOARM=7`. `host_target()` among them builds for this machine too. `xkit --target linux-aarch64` builds for that target instead of those the script names.
 
-- `build run --target <name>` starts the program of that target, through the runner `runner.<target>` names unless this machine runs it itself, see [cpp.md](https://github.com/build-script/build/blob/main/docs/cpp.md#programs-of-other-targets).
-- `build test --target <name>` runs `go test` on this machine, which starts the tests itself: that works for targets this machine runs, like `macos-x86_64` on Apple silicon.
-- `goos` and `goarch` name a system without a target of build-script, like `build_go("tool", goos = "freebsd", goarch = "amd64")`, into `build/commands/tool/`.
+- `xkit run --target <name>` starts the program of that target, through the runner `runner.<target>` names unless this machine runs it itself, see [cpp.md](https://github.com/xkit-build/xkit/blob/main/docs/cpp.md#programs-of-other-targets).
+- `xkit test --target <name>` runs `go test` on this machine, which starts the tests itself: that works for targets this machine runs, like `macos-x86_64` on Apple silicon.
+- `goos` and `goarch` name a system without a target of xkit, like `build_go("tool", goos = "freebsd", goarch = "amd64")`, into `build/commands/tool/`.
 - Programs for other systems build without cgo, which Go turns off for them unless `CGO_ENABLED=1` and a C compiler for the target are set.
 
 ## Modules and caches
 
 - Go modules are downloaded by `go` itself and checked by `go.sum`. They are not in `project.lock`, and the first build needs network for them.
-- The module cache and the build cache are in build-script's cache, shared by all projects: `caches/plugins/go/modules` and `caches/plugins/go/build`. `build clean --cache` removes them, `GOFLAGS=-modcacherw` makes the module cache removable on every system.
+- The module cache and the build cache are in xkit's cache, shared by all projects: `caches/plugins/go/modules` and `caches/plugins/go/build`. `xkit clean --cache` removes them, `GOFLAGS=-modcacherw` makes the module cache removable on every system.
 - A proxy or private modules go through `environment`: `environment = list("GOPROXY=https://proxy.example.com", "GOPRIVATE=example.com/*")`.
 
 ## Embedded files
@@ -89,12 +89,12 @@ Files that `//go:embed` takes into the program are no Go sources, so they need `
 
 ## Templates
 
-| Template | `build new` | Creates                                                                             |
-|----------|-------------|-------------------------------------------------------------------------------------|
-| `app`    | `go`        | a program with a test: `go.mod` with your domain, `src/main.go`, `src/main_test.go` |
+| Template | `xkit new` | Creates                                                                             |
+|----------|------------|-------------------------------------------------------------------------------------|
+| `app`    | `go`       | a program with a test: `go.mod` with your domain, `src/main.go`, `src/main_test.go` |
 
 ## Limits
 
 - One `build_go` builds one program. A library is just a package that programs import: it needs no module of its own.
-- `build idea` does not set up Go projects, use the Go support of your editor.
+- `xkit idea` does not set up Go projects, use the Go support of your editor.
 - `go generate`, `go vet` and linters are not run, use `build_command` with `go_tool(go_version)`.
